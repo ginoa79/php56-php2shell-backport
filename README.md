@@ -20,6 +20,29 @@ for people who still run 5.6 and cannot upgrade right away.
 > - There is no public, verified exploit to test against. The patch was checked
 >   with the regression tests described below, not with a working attack.
 
+## Downloads (Windows x64)
+
+Ready-to-use builds are on the [Releases](../../releases) page. Each zip is the
+official `php-5.6.40-Win32-VC11-x64.zip` from php.net with **three files
+replaced**: `php5ts.dll`, `php.exe` and `php-cgi.exe`. The other 74 files,
+including every extension in `ext\`, are the original php.net files.
+
+There are two variants. **They contain the same PHP fix and differ only in the
+libxml2 library** built into `php5ts.dll`:
+
+| Variant | libxml2 | Choose it if |
+|---|---|---|
+| `...-libxml2-2.9.4.zip` | 2.9.4, the same as the official 5.6.40 build | you want the official build's behaviour, with only PHP2Shell fixed (**recommended**) |
+| `...-libxml2-2.9.9.zip` | 2.9.9, newer, includes fixes for some libxml2 vulnerabilities | you also want the newer libxml2, and accept that `DOMDocument::saveHTML()` and related functions may format HTML slightly differently (e.g. line breaks) |
+
+The official 5.6.40 build is dated 9 January 2019. The libxml2 2.9.9 package
+for Windows was published on 12 February 2019, so the official build used
+libxml2 2.9.4 (`libxml2-2.9.4-1-vc11-x64`).
+
+To install, back up your PHP folder, then copy the three files over a PHP 5.6.40
+x64 thread-safe installation, or use the whole package. Restart the web server
+and every PHP process. Check the SHA-256 checksums listed in the release.
+
 ## What the patch changes
 
 The patch ports the minimal backport the PHP security team published for 7.4
@@ -86,28 +109,52 @@ unchanged. Requirements:
 - Visual Studio 2012 Express for Windows Desktop (`VS2012_WDX_ENU.iso`, still on
   download.microsoft.com)
 - `php-sdk-binary-tools-20110915.zip`, plus the VC11 x64 dependencies
-  `libxml2-2.9.9`, `libiconv-1.14`, `zlib-1.2.7.3` and `libmcrypt-2.5.8` from
-  https://downloads.php.net/~windows/php-sdk/
+  `libiconv-1.14`, `zlib-1.2.7.3`, `libmcrypt-2.5.8` and libxml2 from
+  https://downloads.php.net/~windows/php-sdk/deps/archives/vc11/x64/. For
+  libxml2, use `libxml2-2.9.4-1` to match the official build, or `libxml2-2.9.9`
+  for the newer library. The script takes the dependency folder as its first
+  argument, so you can build both variants:
+  `build-windows.bat C:\php56fix\deps294` and `build-windows.bat C:\php56fix\deps`.
 
 ## Testing
 
 Tested **on Windows x64 only** (VC11, thread safe, CLI and CGI/FastCGI).
 **Linux builds have not been tested.**
 
-**PHP's own test suite** (`Zend/tests`, `tests`, `ext/session/tests`, 2568 tests):
+**PHP's own test suite.** The PHP 5.6.40 test suite was run on the official
+build and on the patched builds, with 60 extensions loaded. The results were
+then compared test by test.
 
-| | passed | failed | skipped |
-|---|---|---|---|
-| official 5.6.40 | 2495 | 1 | 64 |
-| patched 5.6.40 | 2486 | 10 | 64 |
+- **Variant B (libxml2 2.9.9):** full suite (13,152 tests). 11,467 test results
+  were compared one by one with the official build.
+- **Variant A (libxml2 2.9.4):** `Zend/tests`, `tests`, `ext/session` and every
+  extension that uses libxml2 (`dom`, `libxml`, `xml`, `simplexml`,
+  `xmlreader`, `xmlwriter`, `xsl`, `soap`, `wddx`), 3,653 tests. The PHP code
+  is identical to variant B, and only libxml2 differs.
+- Every test whose result differed was then run again **three times, one build
+  at a time**, on the official build and on both variants. Running the suites in
+  parallel had caused false differences: shared ports and session files.
 
-The 9 additional failures are all expected:
+| Difference from the official build | Variant A | Variant B |
+|---|---|---|
+| Expected, caused by the fix | 9 | 9 |
+| Caused by the newer libxml2 | 0 | 4 |
+| **Unexplained** | **0** | **0** |
 
-- **8 × `ext/session/tests/rfc1867*.phpt`:** these tests check session upload
-  progress, which is now disabled.
-- **`tests/lang/bug45392.phpt`:** the memory-limit fatal error is still printed,
-  but the output layout differs by one blank line.
-- `bug66481-win32.phpt` fails on the official build too.
+- **Expected, caused by the fix:**
+  - **8 × `ext/session/tests/rfc1867*.phpt`:** these tests check session upload
+    progress, which is now disabled.
+  - **`tests/lang/bug45392.phpt`:** the memory-limit fatal error is still
+    printed, but the output layout differs by one blank line.
+- **Caused by the newer libxml2 (variant B only):** `ext/dom/tests/dom005.phpt`,
+  `ext/simplexml/tests/008.phpt`, `ext/xmlreader/tests/bug64230.phpt` and
+  `ext/xmlreader/tests/bug73053.phpt`. In variant A and in the official build
+  these tests give the same result.
+
+**Regression tests from the upstream fix.** The upstream commit adds 266 tests.
+Most of them use PHP 8 features and cannot run on 5.6 unchanged. Run as they are,
+they give the same results on the official build and on variant B. They were not
+ported to 5.6.
 
 **Scripts in [`tests/`](tests/)** (`bash tests/run_tests.sh <php dir>`):
 
@@ -118,10 +165,12 @@ The 9 additional failures are all expected:
 | multipart body with 3000 parts | all parsed, then the variables are truncated | stops at 1020 parts with a warning |
 | session upload progress | data written to the session | disabled |
 
-With the patched `php5ts.dll`, the extension DLLs of the official package
-(mysql, mysqli, pdo_mysql, curl, gd2, mbstring, openssl, intl, soap and others)
-load without errors, and `php -m` lists the same 49 modules as the official
-build. The extensions themselves were not tested one by one.
+With the patched `php5ts.dll`, `php -m` lists the same modules as the official
+build, and `php-win.exe` and `phpdbg.exe` from the official package start
+normally.
+
+**Not tested:** Linux builds, non-thread-safe (NTS) and 32-bit builds, and a
+real attack. No verified public exploit exists.
 
 ## License
 
